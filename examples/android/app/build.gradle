@@ -1,0 +1,54 @@
+plugins {
+    id 'com.android.application'
+}
+
+android {
+    namespace 'com.raylib.backends.example'
+    compileSdk 34
+
+    defaultConfig {
+        applicationId 'com.raylib.backends.example'
+        minSdk 26
+        targetSdk 34
+        versionCode 1
+        versionName '0.1.0'
+
+        ndk {
+            abiFilters 'arm64-v8a'
+        }
+
+        externalNativeBuild {
+            cmake {
+                arguments '-DANDROID_STL=c++_shared',
+                          "-DRAYLIB_DIR=${project.findProperty('RAYLIB_DIR') ?: '../../../../../raylib'}",
+                          "-DRAYLIB_BACKENDS_DIR=${project.findProperty('RAYLIB_BACKENDS_DIR') ?: '../../..'}",
+                          "-DRAYGPU_DIR=${project.findProperty('RAYGPU_DIR') ?: '../../../../../raygpu'}"
+                cppFlags '-std=c++17'
+            }
+        }
+    }
+
+    externalNativeBuild {
+        cmake {
+            path 'src/main/cpp/CMakeLists.txt'
+            version '4.0.2'
+        }
+    }
+
+    buildTypes {
+        debug {
+            debuggable true
+        }
+        release {
+            minifyEnabled false
+            signingConfig signingConfigs.debug
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+}
+
+dependencies {}
