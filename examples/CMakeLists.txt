@@ -6,14 +6,18 @@ endif()
 
 include("${CMAKE_CURRENT_LIST_DIR}/../cmake/RaylibBackend.cmake")
 
-set(GLFW_BUILD_DOCS OFF CACHE BOOL "" FORCE)
-set(GLFW_BUILD_TESTS OFF CACHE BOOL "" FORCE)
-set(GLFW_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
-add_subdirectory(${RAYLIB_DIR}/src/external/glfw ${CMAKE_CURRENT_BINARY_DIR}/glfw EXCLUDE_FROM_ALL)
+# GLFW is only needed by the native (Vulkan/Metal) desktop examples; the WebGPU/web
+# example runs against the browser canvas and never links GLFW.
+if(NOT EMSCRIPTEN)
+    set(GLFW_BUILD_DOCS OFF CACHE BOOL "" FORCE)
+    set(GLFW_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+    set(GLFW_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+    add_subdirectory(${RAYLIB_DIR}/src/external/glfw ${CMAKE_CURRENT_BINARY_DIR}/glfw EXCLUDE_FROM_ALL)
+endif()
 
 function(raylib_backends_add_smoke_example target_name backend)
     set(_raylib_rcore "${RAYLIB_DIR}/src/rcore.c")
-    if(APPLE AND "${backend}" STREQUAL "METAL")
+    if((APPLE AND "${backend}" STREQUAL "METAL") OR "${backend}" STREQUAL "WEBGPU")
         raylib_backend_prepare_rcore_overlay(
             OUT_VAR _raylib_rcore
             RAYLIB_DIR "${RAYLIB_DIR}"
@@ -43,13 +47,20 @@ function(raylib_backends_add_smoke_example target_name backend)
     )
 
     add_executable(${target_name} clear_cube.c cube_scene.c)
-    target_link_libraries(${target_name} PRIVATE ${target_name}_raylib glfw)
+    if("${backend}" STREQUAL "WEBGPU")
+        target_link_libraries(${target_name} PRIVATE ${target_name}_raylib)
+        set_target_properties(${target_name} PROPERTIES
+            SUFFIX ".html"
+            LINK_FLAGS "--shell-file ${CMAKE_CURRENT_LIST_DIR}/shell.html -sASYNCIFY -sALLOW_MEMORY_GROWTH=1 --use-port=emdawnwebgpu")
+    else()
+        target_link_libraries(${target_name} PRIVATE ${target_name}_raylib glfw)
+    endif()
 endfunction()
 
-if(APPLE)
+if(EMSCRIPTEN)
+    raylib_backends_add_smoke_example(clear_cube_webgpu WEBGPU)
+elseif(APPLE)
     raylib_backends_add_smoke_example(clear_cube_metal METAL)
-endif()
-
-if(UNIX AND NOT APPLE)
+elseif(UNIX)
     raylib_backends_add_smoke_example(clear_cube_vulkan VULKAN)
 endif()

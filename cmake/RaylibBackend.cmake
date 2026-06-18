@@ -5,7 +5,7 @@ function(raylib_backend_apply_external_rlgl_overlay CONTENTS_VAR RAYLIB_BACKENDS
 
     string(REPLACE
         "#define RLGL_IMPLEMENTATION\n#include \"rlgl.h\""
-        "#if defined(RAYLIB_USE_RLVK)\n    #include \"${RAYLIB_BACKENDS_DIR}/backends/rlvk/rlvk.h\"\n#elif defined(RAYLIB_USE_RLMT)\n    #include \"${RAYLIB_BACKENDS_DIR}/backends/rlmt/rlmt.h\"\n#else\n    #define RLGL_IMPLEMENTATION\n    #include \"rlgl.h\"\n#endif"
+        "#if defined(RAYLIB_USE_RLVK)\n    #include \"${RAYLIB_BACKENDS_DIR}/backends/rlvk/rlvk.h\"\n#elif defined(RAYLIB_USE_RLMT)\n    #include \"${RAYLIB_BACKENDS_DIR}/backends/rlmt/rlmt.h\"\n#elif defined(RAYLIB_USE_RLWG)\n    #include \"${RAYLIB_BACKENDS_DIR}/backends/rlwg/rlwg.h\"\n#else\n    #define RLGL_IMPLEMENTATION\n    #include \"rlgl.h\"\n#endif"
         _contents
         "${_contents}")
 
@@ -13,13 +13,13 @@ function(raylib_backend_apply_external_rlgl_overlay CONTENTS_VAR RAYLIB_BACKENDS
     if(_has_begin_frame EQUAL -1)
         string(REPLACE
             "CORE.Time.previous = CORE.Time.current;\n\n    rlLoadIdentity();"
-            "CORE.Time.previous = CORE.Time.current;\n\n#if defined(RAYLIB_USE_RLVK) || defined(RAYLIB_USE_RLMT)\n    rlBeginFrame();\n#endif\n\n    rlLoadIdentity();"
+            "CORE.Time.previous = CORE.Time.current;\n\n#if defined(RAYLIB_USE_RLVK) || defined(RAYLIB_USE_RLMT) || defined(RAYLIB_USE_RLWG)\n    rlBeginFrame();\n#endif\n\n    rlLoadIdentity();"
             _contents
             "${_contents}")
     else()
         string(REPLACE
             "#if defined(RAYLIB_USE_RLVK)\n    rlBeginFrame();\n#endif"
-            "#if defined(RAYLIB_USE_RLVK) || defined(RAYLIB_USE_RLMT)\n    rlBeginFrame();\n#endif"
+            "#if defined(RAYLIB_USE_RLVK) || defined(RAYLIB_USE_RLMT) || defined(RAYLIB_USE_RLWG)\n    rlBeginFrame();\n#endif"
             _contents
             "${_contents}")
     endif()
@@ -28,13 +28,13 @@ function(raylib_backend_apply_external_rlgl_overlay CONTENTS_VAR RAYLIB_BACKENDS
     if(_has_end_frame EQUAL -1)
         string(REPLACE
             "#if SUPPORT_AUTOMATION_EVENTS\n    if (automationEventRecording) RecordAutomationEvent();    // Event recording\n#endif\n\n#if !SUPPORT_CUSTOM_FRAME_CONTROL"
-            "#if SUPPORT_AUTOMATION_EVENTS\n    if (automationEventRecording) RecordAutomationEvent();    // Event recording\n#endif\n\n#if defined(RAYLIB_USE_RLVK) || defined(RAYLIB_USE_RLMT)\n    rlEndFrame();\n#endif\n\n#if !SUPPORT_CUSTOM_FRAME_CONTROL"
+            "#if SUPPORT_AUTOMATION_EVENTS\n    if (automationEventRecording) RecordAutomationEvent();    // Event recording\n#endif\n\n#if defined(RAYLIB_USE_RLVK) || defined(RAYLIB_USE_RLMT) || defined(RAYLIB_USE_RLWG)\n    rlEndFrame();\n#endif\n\n#if !SUPPORT_CUSTOM_FRAME_CONTROL"
             _contents
             "${_contents}")
     else()
         string(REPLACE
             "#if defined(RAYLIB_USE_RLVK)\n    rlEndFrame();\n#endif"
-            "#if defined(RAYLIB_USE_RLVK) || defined(RAYLIB_USE_RLMT)\n    rlEndFrame();\n#endif"
+            "#if defined(RAYLIB_USE_RLVK) || defined(RAYLIB_USE_RLMT) || defined(RAYLIB_USE_RLWG)\n    rlEndFrame();\n#endif"
             _contents
             "${_contents}")
     endif()
@@ -67,6 +67,14 @@ function(raylib_backend_prepare_rcore_overlay)
     string(REPLACE
         "#include \"platforms/rcore_desktop_glfw.c\""
         "#include \"${RBPO_RAYLIB_BACKENDS_DIR}/backends/rlmt/platforms/rcore_desktop_glfw.c\""
+        _rcore_contents
+        "${_rcore_contents}")
+    # WebGPU backend: swap raylib's WebGL-based web platform for the rlwg one. The
+    # branch is only compiled when PLATFORM_WEB is defined (WEBGPU backend), so this
+    # replacement is inert for the Vulkan/Metal builds.
+    string(REPLACE
+        "#include \"platforms/rcore_web.c\""
+        "#include \"${RBPO_RAYLIB_BACKENDS_DIR}/backends/rlwg/platforms/rcore_web.c\""
         _rcore_contents
         "${_rcore_contents}")
     file(WRITE "${_overlay_src}" "${_rcore_contents}")
@@ -190,7 +198,11 @@ function(raylib_backend_attach)
     set(_root "${RBA_RAYLIB_BACKENDS_DIR}")
 
     if(_backend STREQUAL "VULKAN")
-        target_compile_definitions(${RBA_TARGET} PUBLIC RAYLIB_USE_RLVK RAYLIB_RLGL_EXTENDED GRAPHICS_API_OPENGL_33)
+        target_compile_definitions(${RBA_TARGET} PUBLIC
+            RAYLIB_USE_RLVK
+            RAYLIB_RLGL_EXTENDED
+            GRAPHICS_API_OPENGL_33
+            RLVK_ENABLE_GLSLANG=1)
         target_include_directories(${RBA_TARGET} BEFORE PUBLIC
             "${_root}/backends/rlvk"
             "${_root}/backends/rlvk/platforms"
@@ -219,6 +231,29 @@ function(raylib_backend_attach)
             endif()
         endif()
         set_target_properties(${RBA_TARGET} PROPERTIES RAYLIB_BACKEND_NAME "METAL")
+    elseif(_backend STREQUAL "WEBGPU")
+        if(NOT EMSCRIPTEN)
+            message(FATAL_ERROR "raylib_backend_attach: WEBGPU backend targets the browser; configure with the Emscripten toolchain (emcmake)")
+        endif()
+        target_compile_definitions(${RBA_TARGET} PUBLIC
+            RAYLIB_USE_RLWG
+            RAYLIB_RLGL_EXTENDED
+            GRAPHICS_API_OPENGL_33
+            PLATFORM_WEB)
+        target_include_directories(${RBA_TARGET} BEFORE PUBLIC
+            "${_root}/backends/rlwg")
+        # emdawnwebgpu provides <webgpu/webgpu.h> and the JS glue; ASYNCIFY lets the
+        # async device request settle before rlglInit reads it. These flags propagate
+        # to anything linking the raylib target.
+        target_compile_options(${RBA_TARGET} PUBLIC "--use-port=emdawnwebgpu")
+        target_link_options(${RBA_TARGET} PUBLIC
+            "--use-port=emdawnwebgpu"
+            "-sASYNCIFY"
+            "-sALLOW_MEMORY_GROWTH=1"
+            # Emscripten's default 64 KB stack is too small for raylib's draw paths;
+            # raise it so large transient frame buffers don't overflow and corrupt memory.
+            "-sSTACK_SIZE=4MB")
+        set_target_properties(${RBA_TARGET} PROPERTIES RAYLIB_BACKEND_NAME "WEBGPU")
     else()
         message(FATAL_ERROR "raylib_backend_attach: unsupported BACKEND '${RBA_BACKEND}'")
     endif()

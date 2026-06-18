@@ -11,6 +11,9 @@ void rlStencilFunc(int func, int ref, int mask);
 void rlStencilOp(int fail, int zfail, int zpass);
 void rlStencilMask(int mask);
 void rlClearStencilBuffer(unsigned int value);
+void rlColorMask(bool r, bool g, bool b, bool a);
+void rlEnableDepthMask(void);
+void rlDisableDepthMask(void);
 }
 #else
     #include "rlmt.h"

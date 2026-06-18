@@ -165,8 +165,57 @@ They do not write to your raylib checkout.
 4. If overlay generation fails, update the helper pattern in
    `cmake/RaylibBackend.cmake` instead of patching `raylib/src`.
 
+## WebGPU backend (rlwg)
+
+`rlwg` is a browser WebGPU backend (Emscripten / emdawnwebgpu) that re-implements
+the rlgl API and emulates OpenGL 3.3 1:1, exactly like rlvk/rlmt. It is a fresh
+implementation on the WebGPU C API (`webgpu/webgpu.h`) - it does **not** use raygpu,
+and so does not inherit raygpu's shader caveats.
+
+Files: `backends/rlwg/rlwg.h` (+ `rlwg_impl.h`, `rlwg_impl2.h`), the default shaders
+in `backends/rlwg/rlwg_default_wgsl.h`, the wrapper `backends/rlwg/rlgl.h`, and the
+web platform `backends/rlwg/platforms/rcore_web.c`.
+
+### 1:1 OpenGL 3.3 shader contract
+
+- Fixed attribute locations: 0 position, 1 texcoord, 2 normal, 3 color, 4 tangent,
+  5 texcoord2.
+- The genuine rlgl path: raw model-space vertices upload and the shader transforms by
+  the `mvp` uniform (no CPU pre-transform), so stock raylib shaders behave as on GL.
+- Loose GL uniforms are packed into uniform buffers; the C mirror matches the default
+  shader's byte layout so `rlSetUniform`/`rlSetUniformMatrix` write by offset.
+- Two unavoidable WebGPU deviations, both invisible to rlgl callers:
+  1. clip-space z `[-1,1] -> [0,1]` is remapped in the default vertex shader;
+  2. matrices upload column-major (raylib's `Matrix` struct memory order is the
+     transpose, so they are reordered like `MatrixToFloat` before upload).
+
+### Custom shaders
+
+Browser WebGPU accepts **WGSL only** (no SPIR-V). Pass WGSL to `LoadShader`/
+`rlLoadShaderProgram` (a single source string holding `vs_main` + `fs_main`).
+GL 3.3 GLSL must be translated offline (e.g. glslang -> SPIR-V -> Tint -> WGSL); no
+shader compiler is bundled into the WASM payload.
+
+### Build & run
+
+```
+emcmake cmake -S . -B build-web -DRAYLIB_DIR=/path/to/raylib -DCMAKE_BUILD_TYPE=Release
+cmake --build build-web -j
+# serve build-web/examples and open clear_cube_webgpu.html in a WebGPU browser
+python3 -m http.server --directory build-web/examples
+```
+
+Attach to your own raylib target with `raylib_backend_attach(TARGET raylib BACKEND
+WEBGPU)` under the Emscripten toolchain. Link flags pulled in: `--use-port=emdawnwebgpu`,
+`-sASYNCIFY`, `-sALLOW_MEMORY_GROWTH=1`.
+
+### Current rlwg limits
+
+- Immediate-mode batch path (shapes, text, DrawCube/DrawGrid via batch) is complete.
+- Generic mesh VAO draws (`rlDrawVertexArray*`), cubemaps, mipmap generation, pixel
+  readback, and compute/SSBO are stubbed pending follow-up.
+
 ## Current Limits
 
-- Vulkan and Metal are the active backends.
-- WebGPU is intentionally not implemented.
+- Vulkan, Metal, and WebGPU (browser) are the active backends.
 - The examples are smoke tests, not full raylib feature coverage.
