@@ -31,6 +31,8 @@ void rlwgSetDevice(WGPUDevice device, WGPUQueue queue)
 
 void rlwgSetSurface(WGPUSurface surface) { RLWG.surface = surface; }
 
+bool rlwgHasDevice(void) { return RLWG.device != NULL; }
+
 void rlwgResize(int width, int height)
 {
     RLWG.State.framebufferWidth = width;
@@ -51,8 +53,37 @@ void rlwgResize(int width, int height)
 }
 
 //----------------------------------------------------------------------------------
-// Depth backbuffer
+// Depth backbuffer + MSAA color target
 //----------------------------------------------------------------------------------
+// 4x MSAA for the main backbuffer so shape/icon edges are antialiased (rlvk/rlmt and
+// the desktop GL path enable MSAA too). The pass renders into a multisampled color
+// target and resolves into the swapchain texture at pass end.
+#ifndef RLWG_SAMPLE_COUNT
+    #define RLWG_SAMPLE_COUNT 4
+#endif
+
+static void rlwgEnsureMSAAColor(int w, int h)
+{
+    if (w <= 0 || h <= 0 || RLWG_SAMPLE_COUNT <= 1) return;
+    if (RLWG.msaaColorTexture && RLWG.msaaW == w && RLWG.msaaH == h) return;
+    if (RLWG.msaaColorView) { wgpuTextureViewRelease(RLWG.msaaColorView); RLWG.msaaColorView = NULL; }
+    if (RLWG.msaaColorTexture) { wgpuTextureRelease(RLWG.msaaColorTexture); RLWG.msaaColorTexture = NULL; }
+
+    WGPUTextureDescriptor td = {0};
+    td.usage = WGPUTextureUsage_RenderAttachment;
+    td.dimension = WGPUTextureDimension_2D;
+    td.size.width = (uint32_t)w; td.size.height = (uint32_t)h; td.size.depthOrArrayLayers = 1;
+    td.format = RLWG.surfaceFormat;
+    td.mipLevelCount = 1; td.sampleCount = RLWG_SAMPLE_COUNT;
+    RLWG.msaaColorTexture = wgpuDeviceCreateTexture(RLWG.device, &td);
+    WGPUTextureViewDescriptor vd = {0};
+    vd.format = RLWG.surfaceFormat;
+    vd.dimension = WGPUTextureViewDimension_2D;
+    vd.mipLevelCount = 1; vd.arrayLayerCount = 1;
+    RLWG.msaaColorView = wgpuTextureCreateView(RLWG.msaaColorTexture, &vd);
+    RLWG.msaaW = w; RLWG.msaaH = h;
+}
+
 static void rlwgEnsureDepth(int w, int h)
 {
     if (w <= 0 || h <= 0) return;
@@ -65,7 +96,7 @@ static void rlwgEnsureDepth(int w, int h)
     td.dimension = WGPUTextureDimension_2D;
     td.size.width = (uint32_t)w; td.size.height = (uint32_t)h; td.size.depthOrArrayLayers = 1;
     td.format = RLWG.depthFormat;
-    td.mipLevelCount = 1; td.sampleCount = 1;
+    td.mipLevelCount = 1; td.sampleCount = RLWG_SAMPLE_COUNT;  // match the MSAA color target
     RLWG.depthTexture = wgpuDeviceCreateTexture(RLWG.device, &td);
     WGPUTextureViewDescriptor vd = {0};
     vd.format = RLWG.depthFormat;
@@ -132,6 +163,76 @@ static void rlwgAcquireDevice(const char *canvasSelector)
     if (!dr.device) { TRACELOG(RL_LOG_FATAL, "RLWG: no WebGPU device"); return; }
     RLWG.device = dr.device;
     RLWG.queue = wgpuDeviceGetQueue(RLWG.device);
+}
+
+//----------------------------------------------------------------------------------
+// Asynchronous acquisition (no ASYNCIFY): chained spontaneous callbacks. Lets an
+// engine host avoid -sASYNCIFY so it can enable -sUSE_PTHREADS. The host's entry
+// returns to the browser event loop after calling rlwgAcquireDeviceAsync(); when
+// the device is ready the user callback fires (boot the engine / start rAF there).
+//----------------------------------------------------------------------------------
+static rlwgDeviceReadyCb s_rlwgReadyCb = NULL;
+static void *s_rlwgReadyUser = NULL;
+
+// Surfaces WebGPU validation/runtime errors that would otherwise be silent (no default
+// callback) — e.g. a render-pass/pipeline misconfiguration shows up as a TRACELOG.
+static void rlwgOnUncapturedError(WGPUDevice const *device, WGPUErrorType type, WGPUStringView msg, void *u1, void *u2)
+{
+    (void)device; (void)u1; (void)u2;
+    TRACELOG(RL_LOG_ERROR, "RLWG: WebGPU error (type %d): %.*s", (int)type, (int)msg.length, msg.data ? msg.data : "");
+}
+
+static void rlwgAsyncOnDevice(WGPURequestDeviceStatus status, WGPUDevice device, WGPUStringView msg, void *u1, void *u2)
+{
+    (void)msg; (void)u1; (void)u2;
+    if (status != WGPURequestDeviceStatus_Success || !device)
+    {
+        TRACELOG(RL_LOG_FATAL, "RLWG: async device request failed");
+        return;
+    }
+    RLWG.device = device;
+    RLWG.queue = wgpuDeviceGetQueue(device);
+    if (s_rlwgReadyCb) s_rlwgReadyCb(s_rlwgReadyUser);
+}
+
+static void rlwgAsyncOnAdapter(WGPURequestAdapterStatus status, WGPUAdapter adapter, WGPUStringView msg, void *u1, void *u2)
+{
+    (void)msg; (void)u1; (void)u2;
+    if (status != WGPURequestAdapterStatus_Success || !adapter)
+    {
+        TRACELOG(RL_LOG_FATAL, "RLWG: async adapter request failed");
+        return;
+    }
+    RLWG.adapter = adapter;
+    WGPUDeviceDescriptor dd = {0};
+    dd.uncapturedErrorCallbackInfo.callback = rlwgOnUncapturedError;
+    WGPURequestDeviceCallbackInfo dci = {0};
+    dci.mode = WGPUCallbackMode_AllowSpontaneous;
+    dci.callback = rlwgAsyncOnDevice;
+    wgpuAdapterRequestDevice(adapter, &dd, dci);
+}
+
+void rlwgAcquireDeviceAsync(const char *canvasSelector, rlwgDeviceReadyCb cb, void *user)
+{
+    s_rlwgReadyCb = cb;
+    s_rlwgReadyUser = user;
+
+    RLWG.instance = wgpuCreateInstance(NULL);
+    if (!RLWG.instance) { TRACELOG(RL_LOG_FATAL, "RLWG: wgpuCreateInstance failed"); return; }
+
+    WGPUEmscriptenSurfaceSourceCanvasHTMLSelector sel = {0};
+    sel.chain.sType = WGPUSType_EmscriptenSurfaceSourceCanvasHTMLSelector;
+    sel.selector = rlwgStr(canvasSelector);
+    WGPUSurfaceDescriptor sd = {0};
+    sd.nextInChain = &sel.chain;
+    RLWG.surface = wgpuInstanceCreateSurface(RLWG.instance, &sd);
+
+    WGPURequestAdapterOptions opts = {0};
+    opts.compatibleSurface = RLWG.surface;
+    WGPURequestAdapterCallbackInfo aci = {0};
+    aci.mode = WGPUCallbackMode_AllowSpontaneous;
+    aci.callback = rlwgAsyncOnAdapter;
+    wgpuInstanceRequestAdapter(RLWG.instance, &opts, aci);
 }
 #endif // __EMSCRIPTEN__
 
@@ -232,6 +333,8 @@ void rlglClose(void)
     rlUnloadTexture(RLWG.State.defaultTextureId);
     if (RLWG.depthTextureView) wgpuTextureViewRelease(RLWG.depthTextureView);
     if (RLWG.depthTexture) wgpuTextureRelease(RLWG.depthTexture);
+    if (RLWG.msaaColorView) wgpuTextureViewRelease(RLWG.msaaColorView);
+    if (RLWG.msaaColorTexture) wgpuTextureRelease(RLWG.msaaColorTexture);
     RL_FREE(RLWG.frameVertices);
     RL_FREE(RLWG.framePrimitives);
     RL_FREE(RLWG.textures);
@@ -500,7 +603,9 @@ static WGPURenderPipeline rlwgGetPipeline(RLWGShaderRecord *sh, int topology)
     ds.stencilBack.passOp = WGPUStencilOperation_Keep;
     pd.depthStencil = &ds;
 
-    pd.multisample.count = 1;
+    // Match the render target's sample count: the main backbuffer is MSAA (resolved to
+    // the swapchain); FBO/RenderTexture targets are single-sampled.
+    pd.multisample.count = (RLWG.activeFramebufferId == 0 && RLWG.msaaColorView) ? RLWG_SAMPLE_COUNT : 1;
     pd.multisample.mask = 0xFFFFFFFF;
 
     WGPURenderPipeline pipe = wgpuDeviceCreateRenderPipeline(RLWG.device, &pd);
@@ -541,6 +646,7 @@ void rlBeginFrame(void)
     vd.dimension = WGPUTextureViewDimension_2D;
     vd.mipLevelCount = 1; vd.arrayLayerCount = 1;
     RLWG.currentColorView = wgpuTextureCreateView(st.texture, &vd);
+    rlwgEnsureMSAAColor(RLWG.State.framebufferWidth, RLWG.State.framebufferHeight);
     rlwgEnsureDepth(RLWG.State.framebufferWidth, RLWG.State.framebufferHeight);
     RLWG.currentDepthView = RLWG.depthTextureView;
 
@@ -558,7 +664,18 @@ static void rlwgBeginPassIfNeeded(void)
     if (!RLWG.encoder || !RLWG.currentColorView) return;
 
     WGPURenderPassColorAttachment ca = {0};
-    ca.view = RLWG.currentColorView;
+    // Render into the multisampled target and resolve into the swapchain texture. The
+    // pass opens once per frame (closed in rlEndFrame), so loadOp=Clear is safe — the
+    // transient MSAA texture isn't reloaded.
+    if (RLWG.msaaColorView)
+    {
+        ca.view = RLWG.msaaColorView;
+        ca.resolveTarget = RLWG.currentColorView;
+    }
+    else
+    {
+        ca.view = RLWG.currentColorView;
+    }
     ca.depthSlice = WGPU_DEPTH_SLICE_UNDEFINED;
     ca.loadOp = RLWG.mainPassCleared ? WGPULoadOp_Load : WGPULoadOp_Clear;
     ca.storeOp = WGPUStoreOp_Store;

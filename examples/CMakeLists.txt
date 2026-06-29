@@ -46,6 +46,13 @@ function(raylib_backends_add_smoke_example target_name backend)
         RAYLIB_BACKENDS_DIR ${CMAKE_CURRENT_LIST_DIR}/..
     )
 
+    # The standalone WebGPU example uses a blocking while(!WindowShouldClose()) loop and
+    # -sASYNCIFY; SwapScreenBuffer must yield to the browser. (Engine hosts drive their
+    # own rAF loop and omit this — see backends/rlwg/platforms/rcore_web.c.)
+    if("${backend}" STREQUAL "WEBGPU")
+        target_compile_definitions(${target_name}_raylib PRIVATE RLWG_ASYNCIFY_YIELD)
+    endif()
+
     add_executable(${target_name} clear_cube.c cube_scene.c)
     if("${backend}" STREQUAL "WEBGPU")
         target_link_libraries(${target_name} PRIVATE ${target_name}_raylib)

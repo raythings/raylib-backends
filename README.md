@@ -10,8 +10,11 @@ backend.
 ## Supported Backends
 
 - `VULKAN`: `rlvk`, used by Linux and Android consumers
-- `METAL`: `rlmt`, used by macOS consumers
-- `WEBGPU`: not implemented
+- `METAL`: `rlmt`, used by macOS and iOS consumers
+- `WEBGPU`: `rlwg`, used by web (Emscripten / WebAssembly) consumers
+
+Each backend emulates the OpenGL 3.3 / rlgl API 1:1, so raylib (and code built on
+it) renders the same across Vulkan, Metal, and WebGPU with only minor quirks.
 
 ## Requirements
 
@@ -21,6 +24,7 @@ backend.
 - Vulkan SDK or platform Vulkan libraries for `VULKAN`
 - Xcode command line tools for `METAL`
 - Android Gradle Plugin, NDK, and Vulkan-capable device or emulator for Android
+- Emscripten and a WebGPU-capable browser for `WEBGPU`
 
 ## Directory Layout
 
@@ -28,6 +32,8 @@ backend.
 - `backends/rlvk`: Vulkan backend source and headers
 - `backends/rlvk/platforms`: Android SurfaceView platform glue for Vulkan
 - `backends/rlmt`: Metal backend source and headers
+- `backends/rlwg`: WebGPU backend source and headers
+- `backends/rlwg/platforms`: Emscripten web platform glue (rcore overlay)
 - `third_party/spirv_reflect`: SPIR-V reflection dependency used by Vulkan
 - `examples`: desktop and Android cube examples
 - `patches`: notes for generated overlays; this is not a patch queue

@@ -242,17 +242,20 @@ function(raylib_backend_attach)
             PLATFORM_WEB)
         target_include_directories(${RBA_TARGET} BEFORE PUBLIC
             "${_root}/backends/rlwg")
-        # emdawnwebgpu provides <webgpu/webgpu.h> and the JS glue; ASYNCIFY lets the
-        # async device request settle before rlglInit reads it. These flags propagate
-        # to anything linking the raylib target.
+        # emdawnwebgpu provides <webgpu/webgpu.h> and the JS glue. NOTE: -sASYNCIFY is
+        # intentionally NOT propagated here. The standalone example uses the blocking
+        # rlwgAcquireDevice() path and adds -sASYNCIFY in its own link flags; an engine
+        # host instead uses rlwgAcquireDeviceAsync() (no ASYNCIFY) so it can enable
+        # -sUSE_PTHREADS. These flags propagate to anything linking the raylib target.
         target_compile_options(${RBA_TARGET} PUBLIC "--use-port=emdawnwebgpu")
         target_link_options(${RBA_TARGET} PUBLIC
             "--use-port=emdawnwebgpu"
-            "-sASYNCIFY"
             "-sALLOW_MEMORY_GROWTH=1"
-            # Emscripten's default 64 KB stack is too small for raylib's draw paths;
-            # raise it so large transient frame buffers don't overflow and corrupt memory.
-            "-sSTACK_SIZE=4MB")
+            # Emscripten's default 64 KB stack is too small for raylib's draw paths and
+            # for an engine running QuickJS on top (deep JS/React render recursion).
+            # 16 MB also stays above QuickJS's 8 MB JS_SetMaxStackSize so its overflow
+            # guard trips with a catchable error before the real wasm stack blows.
+            "-sSTACK_SIZE=16MB")
         set_target_properties(${RBA_TARGET} PROPERTIES RAYLIB_BACKEND_NAME "WEBGPU")
     else()
         message(FATAL_ERROR "raylib_backend_attach: unsupported BACKEND '${RBA_BACKEND}'")

@@ -558,6 +558,23 @@ void rlwgSetSurface(WGPUSurface surface);
 void rlwgSetDevice(WGPUDevice device, WGPUQueue queue);
 void rlwgResize(int width, int height);
 
+#if defined(__EMSCRIPTEN__)
+// Asynchronous device acquisition (browser). The standalone example uses the
+// blocking rlwgAcquireDevice() path (requires -sASYNCIFY). An engine host that
+// must NOT pull in ASYNCIFY (e.g. to allow -sUSE_PTHREADS) instead calls this:
+// it creates the instance/surface, requests adapter then device via spontaneous
+// callbacks, sets RLWG.device/queue/surface, and finally invokes `cb(user)` once
+// the device is ready. The host should boot the engine / start its rAF loop from
+// that callback. No emscripten_sleep, no ASYNCIFY.
+typedef void (*rlwgDeviceReadyCb)(void *user);
+void rlwgAcquireDeviceAsync(const char *canvasSelector, rlwgDeviceReadyCb cb, void *user);
+#endif
+
+// True once a WGPU device is available (set by either acquire path or rlwgSetDevice).
+// The web platform layer uses this to skip its own acquisition when an engine host
+// has already provided the device asynchronously.
+bool rlwgHasDevice(void);
+
 #if defined(__cplusplus)
 }
 #endif
@@ -654,10 +671,16 @@ typedef struct rlwgData {
     bool passOpen;
     bool mainPassCleared;               // has the backbuffer been cleared this frame?
 
-    // Depth buffer for the backbuffer
+    // Depth buffer for the backbuffer (multisampled — see RLWG_SAMPLE_COUNT)
     WGPUTexture depthTexture;
     WGPUTextureView depthTextureView;
     int depthW, depthH;
+
+    // Multisample (MSAA) color target for the backbuffer; resolved into the swapchain
+    // texture at pass end so shape/icon edges are antialiased (parity with rlvk/rlmt).
+    WGPUTexture msaaColorTexture;
+    WGPUTextureView msaaColorView;
+    int msaaW, msaaH;
 
     WGPUColor clearColor;
 

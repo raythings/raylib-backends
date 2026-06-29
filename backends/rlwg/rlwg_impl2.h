@@ -161,11 +161,28 @@ void rlEnableScissorTest(void) {}
 void rlDisableScissorTest(void) { if (RLWG.passOpen) wgpuRenderPassEncoderSetScissorRect(RLWG.pass, 0, 0, (uint32_t)RLWG.State.framebufferWidth, (uint32_t)RLWG.State.framebufferHeight); }
 void rlScissor(int x, int y, int width, int height)
 {
-    if (x < 0) { width += x; x = 0; }
-    if (y < 0) { height += y; y = 0; }
+    // raylib's BeginScissorMode flips Y for OpenGL's bottom-left framebuffer
+    // origin: it passes y = framebufferHeight - (top + height). WebGPU's
+    // wgpuRenderPassEncoderSetScissorRect uses a TOP-LEFT origin, so we undo
+    // that flip to recover the top-left y. Without this the scissor lands at the
+    // mirrored vertical position and clips out the intended content (e.g. the
+    // text inside a focused TextInput, or ScrollView contents).
+    int fbH = RLWG.State.framebufferHeight;
+    int topY = fbH - (y + height);
+    x = (x < 0) ? 0 : x;
+    if (topY < 0) { height += topY; topY = 0; }
     if (width < 0) width = 0;
     if (height < 0) height = 0;
-    if (RLWG.passOpen) wgpuRenderPassEncoderSetScissorRect(RLWG.pass, (uint32_t)x, (uint32_t)y, (uint32_t)width, (uint32_t)height);
+    // Clamp to the render target so WebGPU's "scissor must be within attachment"
+    // validation never rejects the pass.
+    int fbW = RLWG.State.framebufferWidth;
+    if (x > fbW) x = fbW;
+    if (topY > fbH) topY = fbH;
+    if (x + width > fbW) width = fbW - x;
+    if (topY + height > fbH) height = fbH - topY;
+    if (width < 0) width = 0;
+    if (height < 0) height = 0;
+    if (RLWG.passOpen) wgpuRenderPassEncoderSetScissorRect(RLWG.pass, (uint32_t)x, (uint32_t)topY, (uint32_t)width, (uint32_t)height);
 }
 
 void rlEnableWireMode(void) {}     // WebGPU has no polygon-line fill mode

@@ -37,6 +37,8 @@ static PlatformData platform = { 0 };   // Platform specific data
 
 // rlwg backend hooks (declared in rlwg.h, which is included via the rlgl overlay)
 void rlwgResize(int width, int height);
+bool rlwgHasDevice(void);
+void rlwgAcquireDevice(const char *canvasSelector);
 
 //----------------------------------------------------------------------------------
 // Module Internal Functions Declaration
@@ -105,11 +107,16 @@ void EnableCursor(void) { CORE.Input.Mouse.cursorHidden = false; }
 void DisableCursor(void) { CORE.Input.Mouse.cursorHidden = true; }
 
 // On the browser the canvas presents implicitly when the frame's command buffer is
-// submitted (rlEndFrame). Here we only yield to the browser event loop so the user's
-// blocking render loop cooperates (requires -sASYNCIFY).
+// submitted (rlEndFrame). A standalone example with a blocking while(!WindowShouldClose())
+// loop must yield to the browser event loop here (requires -sASYNCIFY); it defines
+// RLWG_ASYNCIFY_YIELD. An engine host that drives its own requestAnimationFrame/
+// setTimeout loop returns control every tick, so it must NOT call emscripten_sleep
+// (which aborts without ASYNCIFY) — for that build this is a no-op.
 void SwapScreenBuffer(void)
 {
+#if defined(RLWG_ASYNCIFY_YIELD)
     emscripten_sleep(0);
+#endif
 }
 
 //----------------------------------------------------------------------------------
@@ -199,10 +206,14 @@ int InitPlatform(void)
     CORE.Window.currentFbo.width = w;
     CORE.Window.currentFbo.height = h;
 
-    // Acquire the WebGPU device/surface now (async, ASYNCIFY-blocking) so that
+    // Acquire the WebGPU device/surface now (blocking, requires -sASYNCIFY) so that
     // rlglInit() called by rcore.c immediately after InitPlatform() returns finds
     // device+surface already set and skips re-acquisition.
-    rlwgAcquireDevice(platform.canvasSelector);
+    //
+    // An engine host that acquires the device asynchronously (rlwgAcquireDeviceAsync,
+    // no ASYNCIFY) sets it BEFORE InitWindow; in that case skip the blocking acquire
+    // here entirely — rlglInit will just configure the swapchain on the existing device.
+    if (!rlwgHasDevice()) rlwgAcquireDevice(platform.canvasSelector);
     CORE.Window.ready = true;
 
     // Input callbacks
