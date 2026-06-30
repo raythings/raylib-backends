@@ -186,3 +186,17 @@ normal build integration issues rather than fork conflicts.
 - Android cannot find `rcore_android_surface.h`: make sure
   `raylib_backend_attach(TARGET raylib BACKEND VULKAN ...)` is called and that
   consumers include backend headers through the raylib target.
+
+## Credits & Inspiration
+
+This project stands on the work of others. With gratitude:
+
+- [**raylib**](https://github.com/raysan5/raylib) by Ramon Santamaria (raysan5)
+  — the library these backends attach to, and the `rlgl` / OpenGL 3.3 API every
+  backend emulates 1:1.
+- [**rlvk**](https://github.com/DeexCoding/rlvk) by DeexCoding — inspiration for
+  the Vulkan (`rlvk`) backend.
+- [**raygpu**](https://github.com/manuel5975p/raygpu) by manuel5975p —
+  inspiration for the WebGPU (`rlwg`) backend.
+- [**MGL**](https://github.com/openglonmetal/MGL) (OpenGL on Metal) — inspiration
+  for emulating the OpenGL API on Metal in the (`rlmt`) backend.
